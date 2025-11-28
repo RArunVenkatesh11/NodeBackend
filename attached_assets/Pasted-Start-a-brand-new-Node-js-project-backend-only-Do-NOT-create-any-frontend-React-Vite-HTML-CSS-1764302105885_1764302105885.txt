@@ -1,0 +1,382 @@
+Start a brand new Node.js project (backend only).
+Do NOT create any frontend, React, Vite, HTML, CSS, or TypeScript files.
+
+I want a pure backend REST API for my app:
+InnooRyze Marketing Maturity Assessment (MMA)
+
+Use:
+
+Node.js (CommonJS require)
+
+express
+
+cors
+
+@supabase/supabase-js
+
+openai
+
+❌ No /src, /client, /public, /pages, /dist, /build, or any UI code.
+❌ No TypeScript, no JSX, no React.
+
+1. Project structure (exact)
+
+Create only these files:
+
+/index.js       # main Express app + all routes
+/package.json
+/.replit
+/README.md
+
+
+No other files or folders.
+
+.replit must contain:
+
+run = "node index.js"
+
+2. Dependencies
+
+Add these to package.json and install them:
+
+express
+
+cors
+
+@supabase/supabase-js
+
+openai
+
+No other libraries unless absolutely required.
+
+3. Environment variables
+
+Read the following from process.env:
+
+SUPABASE_URL
+
+SUPABASE_SERVICE_ROLE_KEY
+
+OPENAI_API_KEY
+
+If any are missing, log a clear warning (console.warn) but still start the server.
+
+Initialize clients in index.js:
+
+const express = require("express");
+const cors = require("cors");
+const { createClient } = require("@supabase/supabase-js");
+const OpenAI = require("openai");
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+const app = express();
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+}));
+app.options("*", cors());
+app.use(express.json());
+
+
+Server listen:
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("🚀 InnooRyze MMA backend listening on port " + PORT);
+});
+
+4. Supabase schema (FOR REFERENCE, DO NOT RUN MIGRATION)
+
+Supabase tables are already created.
+Do NOT run any migrations, do NOT call rpc to create tables, and do NOT alter them.
+
+For your reference, the schema is:
+
+-- USERS TABLE
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT UNIQUE NOT NULL,
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    phone TEXT,
+    business_name TEXT,
+    country TEXT,
+    industry TEXT,
+    company_size TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ASSESSMENTS TABLE
+CREATE TABLE IF NOT EXISTS assessments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    business_type TEXT NOT NULL CHECK (business_type IN ('B2B', 'B2C')),
+    selected_categories TEXT[] NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'completed')),
+    raw_answers JSONB,
+    scores JSONB,
+    analysis TEXT,
+    options JSONB,
+    growth_simulation JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+
+Your code should only use supabase.from("users") and supabase.from("assessments") to select, insert, and update rows.
+
+5. API endpoints to implement
+
+Implement all of these in index.js, with proper try/catch and JSON responses.
+
+5.1 GET /health
+
+Returns a JSON health check:
+
+{
+  "status": "ok",
+  "service": "InnooRyze MMA Backend",
+  "timestamp": "2025-01-01T00:00:00.000Z"
+}
+
+
+Use new Date().toISOString() for timestamp.
+
+5.2 POST /api/assessments/start
+
+Purpose:
+After step 2 in the UI (“Tell us about yourself”), frontend calls this to create an assessment.
+
+Request body (from frontend):
+
+{
+  "businessType": "B2B",
+  "userInfo": {
+    "firstName": "Arun",
+    "email": "user@example.com",
+    "businessName": "InnooRyze",
+    "country": "SG",
+    "industry": "Marketing"
+  },
+  "selectedCategories": ["data", "channels", "technology"]
+}
+
+
+Validation:
+
+businessType is required and must be "B2B" or "B2C".
+
+userInfo.firstName, userInfo.email, userInfo.businessName are required.
+
+country and industry are optional.
+
+Logic:
+
+Extract businessType, userInfo, and selectedCategories.
+
+If required fields are missing → respond with HTTP 400 and JSON { error: "message" }.
+
+Look up existing user by email:
+
+const { data: existingUsers, error } = await supabase
+  .from("users")
+  .select("*")
+  .eq("email", email)
+  .limit(1);
+
+
+If no user exists, insert into users:
+
+{
+  email,
+  first_name: firstName,
+  last_name: "",          // UI doesn’t ask; use empty string
+  phone: null,            // not used
+  business_name: businessName,
+  country: country || null,
+  industry: industry || null,
+  company_size: null
+}
+
+
+Insert a row into assessments:
+
+{
+  user_id: user.id,
+  business_type: businessType,
+  selected_categories: selectedCategories || [],
+  status: "started"
+}
+
+
+Respond with JSON:
+
+{ "assessmentId": "<uuid-of-new-assessment>" }
+
+
+On Supabase error, log with console.error and respond with HTTP 500 and:
+
+{ "error": "Failed to start assessment." }
+
+5.3 POST /api/assessments/:id/submit
+
+Purpose:
+After user finishes all questions, frontend submits answers to get scoring and recommendations.
+
+Request body from frontend:
+
+{
+  "businessType": "B2B",
+  "selectedCategories": ["data", "channels", "technology"],
+  "answers": {
+    "b2b-data-1": { "score": 3 },
+    "b2b-channels-2": { "score": 4 }
+  }
+}
+
+
+Validation:
+
+Path param :id (assessmentId) is required.
+
+answers must be an object and not empty.
+
+OpenAI call:
+
+Use the OpenAI official SDK and gpt-4o-mini with:
+
+const response = await openai.chat.completions.create({
+  model: "gpt-4o-mini",
+  response_format: { type: "json_object" },
+  messages: [
+    { role: "system", content: "You are a marketing consultant ... (explain task)" },
+    { role: "user", content: JSON.stringify({ businessType, selectedCategories, answers }) }
+  ]
+});
+
+
+The system message must instruct the model to return JSON like:
+
+{
+  "scores": {
+    "overall": 3.4,
+    "data": 3,
+    "channels": 4,
+    "technology": 3
+  },
+  "analysis": "Short narrative explanation of their current marketing maturity.",
+  "options": {
+    "crawl": { "summary": "string", "actions": ["..."] },
+    "walk":  { "summary": "string", "actions": ["..."] },
+    "run":   { "summary": "string", "actions": ["..."] }
+  },
+  "growthSimulation": {
+    "crawl": { "data": 3.5, "channels": 3.6, "technology": 3.0 },
+    "walk":  { "data": 4.0, "channels": 4.1, "technology": 3.5 },
+    "run":   { "data": 4.5, "channels": 4.6, "technology": 4.2 }
+  }
+}
+
+
+Then:
+
+Parse JSON from response.choices[0].message.content.
+
+Update the assessments row with id :id:
+
+{
+  raw_answers: answers,
+  scores,
+  analysis,
+  options,
+  growth_simulation: growthSimulation,
+  status: "completed",
+  completed_at: new Date().toISOString()
+}
+
+
+Respond with JSON:
+
+{
+  "assessmentId": "<id>",
+  "scores": { ... },
+  "analysis": "string",
+  "options": { ... },
+  "growthSimulation": { ... }
+}
+
+
+On any error (OpenAI or Supabase), log with console.error and return HTTP 500:
+
+{ "error": "Failed to generate assessment results." }
+
+5.4 GET /api/assessments/:id
+
+Look up the row in assessments by id.
+
+If found → return the full row as JSON.
+
+If not found → return HTTP 404 and:
+
+{ "error": "Assessment not found." }
+
+5.5 POST /api/assessments/:id/pdf (stub only)
+
+Do not implement PDF generation.
+
+Always return HTTP 501 with:
+
+{ "message": "PDF export not implemented yet." }
+
+6. Error handling rules
+
+Wrap route handlers with try/catch.
+
+Use console.error for internal logging.
+
+Do NOT send stack traces to the client.
+
+All client errors must be clean JSON like { "error": "..." }.
+
+7. Final console output
+
+After app.listen, log:
+
+InnooRyze MMA Backend Ready
+
+Endpoints:
+GET    /health
+POST   /api/assessments/start
+POST   /api/assessments/:id/submit
+GET    /api/assessments/:id
+POST   /api/assessments/:id/pdf
+
+8. Summary of DO / DO NOT
+
+DO:
+
+Build only index.js, package.json, .replit, README.md.
+
+Use Express + CORS + Supabase client + OpenAI.
+
+Implement exactly the endpoints above.
+
+DO NOT:
+
+❌ No frontend / React / Vite / HTML
+
+❌ No extra folders like /src, /client, /public
+
+❌ No TypeScript
+
+❌ No new database tables or migrations
+
+❌ No additional endpoints
